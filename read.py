@@ -59,8 +59,11 @@ def validate_system_distances(system):
     try:
         for spop in populated_systems_within_500ly.keys():
             sp = populated_systems_within_500ly[spop]
-            if get_system_distance(system,sp)<10 and get_system_distance(sp,sol)<500 and system[1][0]<0 and system[1][2]>0:
-                return [system,sp]
+            poggg=[x for x in system[2] if len(x[8])>0 and len([y for y in x[8] if y["type"] in ["Metal Rich","Icy"]])>1 and x[2]<2000]
+            if get_system_distance(system,sp)<16 and get_system_distance(sp,sol)<500 and system[1][0]<0 and system[1][2]>0:
+                if len(poggg)>0:        
+                    #print(poggg)     
+                    return [system,sp]
     except Exception as e:
         print(f"Failed to validate system: {e}")
     return []   

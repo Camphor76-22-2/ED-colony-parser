@@ -126,7 +126,7 @@ def process_system_line(jline):
     except Exception as e:
         print(f"Failed to read system: {e}")
         print(jline)
-    if system['population'] > 1000000 and get_system_distance(system,sol)<500 and get_system_distance(system,sol)>140:
+    if system['population'] > 100000 and get_system_distance(system,sol)<500 and get_system_distance(system,sol)>100:
         populated_systems_within_500ly[system['name']]=system
         #print(f"Added system to list of possible colony contacts: {system['name']} {get_system_distance(system,sol)}")
     return system
@@ -165,8 +165,8 @@ def get_desired_bodies(system,terms):
             count_terraformable+=1
             desired_bodies.append(body)
         elif "giant" in body['subtype'] or "giant" in body['bodytype']:
-            count_gg+=1
             if terms[0]!=0 and "ring" in terms[0] and len(terms[0].split(":"))>1 and len([x for x in body["rings"] if terms[0].split(":")[1] in x["type"]])>0:
+                count_gg+=1
                 desired_bodies.append(body)
                 #print(body)
         elif "Earth-like world" in body['subtype'] :
@@ -174,7 +174,7 @@ def get_desired_bodies(system,terms):
             desired_bodies.append(body)
         if {body['bodytype'],body['subtype']} not in bodytypes:
             bodytypes.append({body['bodytype'],body['subtype']})
-    return desired_bodies if count_terraformable+count_barycentres+count_gg>=3 else []
+    return desired_bodies if count_terraformable+count_barycentres+count_gg>=3 and count_gg>0 else []
 
 def get_system_distance(s1,s2):
     return math.sqrt(((s1['coords']['x']-s2['coords']['x'])**2)+
@@ -184,7 +184,7 @@ def get_system_distance(s1,s2):
 def validate_system_distances(system):
     for spop in populated_systems_within_500ly.keys():
         sp = populated_systems_within_500ly[spop]
-        if get_system_distance(system,sp)<10 and get_system_distance(sp,sol)<500:
+        if get_system_distance(system,sp)<16 and get_system_distance(sp,sol)<500:
             return True
     return False    
 
