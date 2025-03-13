@@ -27,7 +27,7 @@ security varchar(255),
 population BIGINT,
 bodyCount int,
 date TIMESTAMP);
-CREATE INDEX  IF NOT EXISTS galaxy_systems_idx
+CREATE INDEX  IF NOT EXISTS galaxy_location_idx
   ON systems
   USING SPGIST (coord);
 """
