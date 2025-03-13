@@ -1,4 +1,4 @@
-import mariadb
+import psycopg2
 import math,json,gzip,getopt,sys,time
 from typing import NamedTuple
 import orjson
@@ -6,25 +6,18 @@ import orjson
 conn=None
 def get_conn():
     try:
-        conn = mariadb.connect(
-            user="galaxydumper",
-            password="galaxydumper",
-            host="127.0.0.1",
-            port=3306,
-            database="galaxy"
+        conn = psycopg2.connect(
+            "dbname=galaxy user=galaxy password=galaxy"
         )
         return conn
     except Exception as e:
         print(f"Failed to open connection to database: {e}")
 
-
 def ensure_setup(cur):
     cur.execute(
 """CREATE TABLE IF NOT EXISTS systems(
-id64 BIGINT,
-x int,
-y int,
-z int,
+id64 BIGINT PRIMARY KEY,
+coord geometry,
 name varchar(255) not null,
 allegiance varchar(255),
 government varchar(255),
@@ -33,14 +26,17 @@ secondaryEconomy varchar(255),
 security varchar(255),
 population BIGINT,
 bodyCount int,
-date DATETIME,
-PRIMARY key(id64)
-)"""
+date TIMESTAMP);
+CREATE INDEX galaxy_systems_idx
+  ON systems
+  USING SPGIST (coord);
+"""
 )
+    conn.commit()
     cur.execute(
 """CREATE TABLE IF NOT EXISTS bodies(
-system_id64 BIGINT,
-body_id64 BIGINT,
+system_id64 BIGINT REFERENCES systems(id64),
+body_id64 BIGINT PRIMARY KEY,
 name varchar(255) not null,
 type varchar(255),
 subtype varchar(255),
@@ -64,20 +60,15 @@ argOfPeriapsis FLOAT,
 meanAnomaly FLOAT,
 ascendingNode FLOAT,
 timestamps varchar(255),
-updateTime DATETIME,
-PRIMARY key(body_id64),
-CONSTRAINT `fk_system_id64`
-    FOREIGN KEY (system_id64) REFERENCES systems (id64)
-    ON DELETE CASCADE
-    ON UPDATE RESTRICT
-)"""
+updateTime TIMESTAMP
+);"""
     )
     cur.execute(
 """CREATE TABLE IF NOT EXISTS stations(
-id BIGINT,
-system_id64 BIGINT,
+id BIGINT PRIMARY KEY,
+system_id64 BIGINT REFERENCES systems (id64),
 name varchar(255) not null,
-updateTime DATETIME,
+updateTime TIMESTAMP,
 controllingFaction varchar(255),
 controllingFactionState varchar(255),
 distanceToArrival FLOAT,
@@ -87,13 +78,8 @@ government varchar(255),
 services TEXT,
 type varchar(255),
 landingPads varchar(255),
-market TEXT,
-PRIMARY key(id),
-CONSTRAINT `fk_system_id64_stations`
-    FOREIGN KEY (system_id64) REFERENCES systems (id64)
-    ON DELETE CASCADE
-    ON UPDATE RESTRICT
-)"""
+market TEXT
+);"""
 )
     
 def get_system_distance(s1,s2):
@@ -112,7 +98,7 @@ def update_stations(cur, stations,id64):
     try:
         cur.execute(
 """INSERT INTO stations(id,system_id64,name,updateTime,controllingFaction,controllingFactionState,distanceToArrival,primaryEconomy,economies,government,services,type,landingPads,market)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE controllingFaction=?,controllingFactionState=?,primaryEconomy=?,economies=?,government=?,services=?,landingPads=?,market=?;""",
+VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (id) DO UPDATE SET controllingFaction=%s,controllingFactionState=%s,primaryEconomy=%s,economies=%s,government=%s,services=%s,landingPads=%s,market=%s;""",
 (stations["id"],
 id64,
 stations['name'],
@@ -121,26 +107,24 @@ None if not 'controllingFaction' in stations.keys() else stations['controllingFa
 None if not 'controllingFactionState' in stations.keys() else stations['controllingFactionState'],
 0 if not 'distanceToArrival' in stations.keys() else stations['distanceToArrival'],
 None if not 'primaryEconomy' in stations.keys() else stations['primaryEconomy'],
-None if not 'economies' in stations.keys() else stations['economies'],
+None if not 'economies' in stations.keys() else str(stations['economies']),
 None if not 'government' in stations.keys() else stations['government'],
-None if not 'services' in stations.keys() else stations['services'],
+None if not 'services' in stations.keys() else str(stations['services']),
 None if not 'type' in stations.keys() else stations['type'],
-None if not 'landingPads' in stations.keys() else stations['landingPads'],
-None if not 'market' in stations.keys() else stations['market'],
+None if not 'landingPads' in stations.keys() else str(stations['landingPads']),
+None if not 'market' in stations.keys() else str(stations['market']),
 None if not 'controllingFaction' in stations.keys() else stations['controllingFaction'],
 None if not 'controllingFactionState' in stations.keys() else stations['controllingFactionState'],
 None if not 'primaryEconomy' in stations.keys() else stations['primaryEconomy'],
-None if not 'economies' in stations.keys() else stations['economies'],
+None if not 'economies' in stations.keys() else str(stations['economies']),
 None if not 'government' in stations.keys() else stations['government'],
-None if not 'services' in stations.keys() else stations['services'],
-None if not 'landingPads' in stations.keys() else stations['landingPads'],
-None if not 'market' in stations.keys() else stations['market'],
+None if not 'services' in stations.keys() else str(stations['services']),
+None if not 'landingPads' in stations.keys() else str(stations['landingPads']),
+None if not 'market' in stations.keys() else str(stations['market']),
 )
 )
-    except mariadb.Error as e: 
-        print(f"Error: {e}")
-
-
+    except psycopg2.Error as e: 
+        print(f"Error stat: {e}")
 
 def update_bodies(cur, bodies, id64):
     udt = None
@@ -149,7 +133,7 @@ def update_bodies(cur, bodies, id64):
     try:
         cur.execute(
 """INSERT INTO bodies(system_id64,body_id64,name,type,subtype,distance_arv,mainStar,age,spectralClass,luminosity,absoluteMagnitude,solarMasses,solarRadius,surfaceTemperature,rotationalPeriod,axialTilt,parents,orbitalPeriod,semiMajorAxis,orbitalEccentricity,orbitalInclination,argOfPeriapsis,meanAnomaly,ascendingNode,timestamps,updateTime)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE updateTime=?;""",
+VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (body_id64) DO UPDATE SET updateTime=%s;""",
 (id64,
 bodies["id64"],
 bodies["name"],
@@ -166,7 +150,7 @@ None if not 'solarRadius' in bodies.keys() else bodies['solarRadius'],
 None if not 'surfaceTemperature' in bodies.keys() else bodies['surfaceTemperature'],
 None if not 'rotationalPeriod' in bodies.keys() else bodies['rotationalPeriod'],
 None if not 'axialTilt' in bodies.keys() else bodies['axialTilt'],
-None if not 'parents' in bodies.keys() else bodies['parents'],
+None if not 'parents' in bodies.keys() else str(bodies['parents']),
 None if not 'orbitalPeriod' in bodies.keys() else bodies['orbitalPeriod'],
 None if not 'semiMajorAxis' in bodies.keys() else bodies['semiMajorAxis'],
 None if not 'orbitalEccentricity' in bodies.keys() else bodies['orbitalEccentricity'],
@@ -174,13 +158,13 @@ None if not 'orbitalInclination' in bodies.keys() else bodies['orbitalInclinatio
 None if not 'argOfPeriapsis' in bodies.keys() else bodies['argOfPeriapsis'],
 None if not 'meanAnomaly' in bodies.keys() else bodies['meanAnomaly'],
 None if not 'ascendingNode' in bodies.keys() else bodies['ascendingNode'],
-None if not 'timestamps' in bodies.keys() else bodies['timestamps'],
+None if not 'timestamps' in bodies.keys() else str(bodies['timestamps']),
 udt,
 udt
 )
 )
-    except mariadb.Error as e: 
-        print(f"Error: {e}")
+    except psycopg2.Error as e: 
+        print(f"Error bod: {e}")
 
 
 def update_system(cur,jline):
@@ -188,12 +172,10 @@ def update_system(cur,jline):
     #print(jline)
     try:
         cur.execute(
-"""INSERT INTO systems(id64,x,y,z,name,allegiance,government,primaryEconomy,secondaryEconomy,security,population,bodyCount,date)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE allegiance=?,government=?,primaryEconomy=?,secondaryEconomy=?,security=?,population=?,date=?;""",
+"""INSERT INTO systems(id64,coord,name,allegiance,government,primaryEconomy,secondaryEconomy,security,population,bodyCount,date)
+VALUES (%s,st_pointz(%s, %s, %s),%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (id64) DO UPDATE SET allegiance=%s,government=%s,primaryEconomy=%s,secondaryEconomy=%s,security=%s,population=%s,date=%s;""",
 (jline["id64"],
-jline['coords']['x'],
-jline['coords']['y'],
-jline['coords']['z'],
+jline['coords']['x'],jline['coords']['y'],jline['coords']['z'],
 jline['name'],
 None if not 'allegiance' in jline.keys() else jline['allegiance'],
 None if not 'government' in jline.keys() else jline['government'],
@@ -212,8 +194,8 @@ None if not 'security' in jline.keys() else jline['security'],
 date,
 )
 )
-    except mariadb.Error as e: 
-        print(f"Error: {e}")
+    except psycopg2.Error as e: 
+        print(f"Error sys: {e}")
     conn.commit()
     if "stations" in jline.keys():
         for station in jline["stations"]:
@@ -223,10 +205,6 @@ date,
         for body in jline["bodies"]:
             update_bodies(cur,body,jline["id64"])
     conn.commit()
-    
-
-
-
 
 def load_messages(cur,filein):
     with gzip.open(filein,'r') as file:
@@ -235,9 +213,14 @@ def load_messages(cur,filein):
         for line in file:
             rline = line.decode("utf-8")
             jline = orjson.loads(rline.strip().strip(","))
+            n+=1
+            if n>=1000000: 
+                if n%1000000==0:print(f"Scanned lines({int(n/1000000)}m)-({int(((n/1000000)/139)*100)}%)")
+            elif n<1000000: 
+                if n%1000==0:print(f"Scanned lines({int(n/1000)}k)-({int(((n/1000000)/139)*100)}%)")
             if get_system_distance([0,0,0],[jline['coords']['x'],jline['coords']['y'],jline['coords']['z']])<10000:
                 update_system(cur,jline)
-
+            #if n>100000:break
 
 def main():
     argv = sys.argv        
@@ -246,6 +229,9 @@ def main():
         conn = get_conn()
         cur = conn.cursor()
         ensure_setup(cur)
+        print("Setup complete")
+        conn.commit()
+        print("loading messages")
         load_messages(cur,argv[1])
         conn.commit()
         conn.close()
