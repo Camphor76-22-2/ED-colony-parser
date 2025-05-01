@@ -1,0 +1,372 @@
+import psycopg
+import math,json,gzip,getopt,sys,time
+from typing import NamedTuple
+import orjson
+
+conn=None
+a1=[0]*1000
+a2=[0]*1000
+a3=[0]*1000
+def av_windowprint():
+    print(f"{round(sum(a1) / len(a1), 4)},{round(sum(a2) / len(a2), 4)},{round(sum(a3) / len(a3), 4)}")
+
+ 
+
+
+def get_conn():
+    try:
+        conn = psycopg.connect(
+            "dbname=galaxy user=galaxy password=galaxy"
+        )
+        return conn
+    except Exception as e:
+        print(f"Failed to open connection to database: {e}")
+
+def ensure_setup(cur):
+    cur.execute(
+"""CREATE TABLE IF NOT EXISTS systems(
+autoid serial primary key,
+id64 BIGINT UNIQUE,
+coord geometry,
+name varchar(255) not null,
+allegiance varchar(255),
+government varchar(255),
+primaryEconomy varchar(255),
+secondaryEconomy varchar(255),
+security varchar(255),
+population BIGINT,
+bodyCount int,
+date TIMESTAMP);
+CREATE INDEX  IF NOT EXISTS galaxy_location_idx
+  ON systems
+  USING SPGIST (coord spgist_geometry_ops_3d);
+"""
+)
+    conn.commit()
+    cur.execute(
+"""CREATE TABLE IF NOT EXISTS bodytype(
+autoid serial primary key,
+type varchar(255) UNIQUE
+);"""
+)
+    conn.commit()
+    cur.execute(
+"""CREATE TABLE IF NOT EXISTS bodies(
+autoid serial primary key,
+system_id64 BIGINT ,
+body_id64 BIGINT UNIQUE,
+name varchar(255) not null,
+type varchar(255),
+subtype varchar(255),
+distance_arv FLOAT,
+mainStar varchar(255),
+age int,
+spectralClass varchar(255),
+luminosity varchar(255),
+absoluteMagnitude FLOAT,
+solarMasses FLOAT,
+solarRadius FLOAT,
+surfaceTemperature FLOAT,
+rotationalPeriod FLOAT,
+axialTilt FLOAT,
+parents varchar(255),
+orbitalPeriod FLOAT,
+semiMajorAxis FLOAT,
+orbitalEccentricity FLOAT,
+orbitalInclination FLOAT,
+argOfPeriapsis FLOAT,
+meanAnomaly FLOAT,
+ascendingNode FLOAT,
+timestamps varchar(255),
+updateTime TIMESTAMP,
+isLandable boolean,
+atmosphereType varchar(255),
+surfacePressure FLOAT,
+atmosphereComposition varchar(255),
+stations TEXT,
+gravity FLOAT,
+earthMasses FLOAT,
+rotationalPeriodTidallyLocked boolean
+);""")
+    cur.execute(
+"""CREATE TABLE IF NOT EXISTS stations(
+autoid serial primary key,
+id BIGINT UNIQUE,
+system_id64 BIGINT REFERENCES systems (id64),
+name varchar(255) not null,
+updateTime TIMESTAMP,
+controllingFaction varchar(255),
+controllingFactionState varchar(255),
+distanceToArrival FLOAT,
+primaryEconomy varchar(255),
+economies varchar(255),
+government varchar(255),
+services TEXT,
+type varchar(255),
+landingPads varchar(255),
+market TEXT
+);"""
+)
+    cur.execute(
+"""CREATE TABLE IF NOT EXISTS rings(
+autoid serial primary key,
+body_id64 BIGINT REFERENCES bodies (body_id64),
+system_id64 BIGINT REFERENCES systems (id64),
+name varchar(255) UNIQUE,
+type varchar(255),
+mass FLOAT,
+innerRadius FLOAT,
+outerRadius FLOAT
+);"""
+)
+    
+
+    
+def get_system_distance(s1,s2):
+    try:
+        return math.sqrt(((s1[0]-s2[0])**2)+
+        ((s1[1]-s2[1])**2)+
+        ((s1[2]-s2[2])**2))
+    except Exception as e:
+        print(f"Failed to check distances {e}")
+
+
+def update_rings(cur,ring,body_id64,system_id64):
+    try:
+            cur.execute(
+    """INSERT INTO rings(body_id64,system_id64,name,type,mass,innerRadius,outerRadius)
+    VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (name) DO NOTHING;""",
+    (body_id64,
+     system_id64,
+     None if not 'name' in ring.keys() else ring["name"],
+     None if not 'type' in ring.keys() else ring["type"],
+     None if not 'mass' in ring.keys() else ring["mass"],
+     None if not 'innerRadius' in ring.keys() else ring["innerRadius"],
+     None if not 'outerRadius' in ring.keys() else ring["outerRadius"],
+    )
+    )
+    except psycopg.Error as e: 
+        print(f"Error stat: {e}")
+    except Exception as e:
+        print(e)
+
+
+def update_stations(cur, stations,id64):
+    udt=None
+    try: 
+        udt = stations['updateTime'].split("+")[0]
+    except: print("error")
+    try:
+        cur.execute(
+"""INSERT INTO stations(id,system_id64,name,updateTime,controllingFaction,controllingFactionState,distanceToArrival,primaryEconomy,economies,government,services,type,landingPads,market)
+VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) 
+ON CONFLICT (id) DO UPDATE SET updateTime=%s,controllingFaction=%s,controllingFactionState=%s,primaryEconomy=%s,economies=%s,government=%s,services=%s,landingPads=%s,market=%s
+WHERE stations.updateTime<EXCLUDED.updateTime;""",
+(stations["id"],
+id64,
+stations['name'],
+udt,
+None if not 'controllingFaction' in stations.keys() else stations['controllingFaction'],
+None if not 'controllingFactionState' in stations.keys() else stations['controllingFactionState'],
+0 if not 'distanceToArrival' in stations.keys() else stations['distanceToArrival'],
+None if not 'primaryEconomy' in stations.keys() else stations['primaryEconomy'],
+None if not 'economies' in stations.keys() else str(stations['economies']),
+None if not 'government' in stations.keys() else stations['government'],
+None if not 'services' in stations.keys() else str(stations['services']),
+None if not 'type' in stations.keys() else stations['type'],
+None if not 'landingPads' in stations.keys() else str(stations['landingPads']),
+None if not 'market' in stations.keys() else str(stations['market']),
+udt,
+None if not 'controllingFaction' in stations.keys() else stations['controllingFaction'],
+None if not 'controllingFactionState' in stations.keys() else stations['controllingFactionState'],
+None if not 'primaryEconomy' in stations.keys() else stations['primaryEconomy'],
+None if not 'economies' in stations.keys() else str(stations['economies']),
+None if not 'government' in stations.keys() else stations['government'],
+None if not 'services' in stations.keys() else str(stations['services']),
+None if not 'landingPads' in stations.keys() else str(stations['landingPads']),
+None if not 'market' in stations.keys() else str(stations['market']),
+)
+)
+    except psycopg.Error as e: 
+        print(f"Error stat: {e}")
+
+    
+
+
+
+def update_bodies(cur, bodies, id64):
+    #stime=time.time()
+#     subtype = 
+#     cur.execute(
+# """insert into bodytype (type) values (%s) on conflict (type) do nothing;
+# """,(subtype))
+#     cur.execute("SELECT setval('bodytype_autoid_seq', MAX(autoid)) from bodytype;")
+#     cur.execute("select autoid from bodytype where type=%s limit 1;",(subtype))
+#     typeid = cur.fetchall()[0][0]
+    #ttime=time.time()
+    udt = None
+    if 'updateTime' in bodies.keys():
+        udt = bodies['updateTime'].split("+")[0]
+    try:
+        with cur.copy(
+"""copy bodies(system_id64,body_id64,name,type,subtype,distance_arv,mainStar,age,spectralClass,luminosity,absoluteMagnitude,solarMasses,solarRadius,surfaceTemperature,rotationalPeriod,axialTilt,parents,orbitalPeriod,semiMajorAxis,orbitalEccentricity,orbitalInclination,argOfPeriapsis,meanAnomaly,ascendingNode,timestamps,updateTime,isLandable,atmosphereType,surfacePressure,atmosphereComposition,stations,gravity,earthMasses,rotationalPeriodTidallyLocked)
+from stdin;""") as copytarget:
+            record = (id64,
+bodies["id64"],
+bodies["name"],
+None if not 'type' in bodies.keys() else bodies['type'],
+'None' if not 'subType' in bodies.keys() else bodies['subType'],
+None if not 'distanceToArrival' in bodies.keys() else bodies['distanceToArrival'],
+None if not 'mainStar' in bodies.keys() else bodies['mainStar'],
+None if not 'age' in bodies.keys() else bodies['age'],
+None if not 'spectralClass' in bodies.keys() else bodies['spectralClass'],
+None if not 'luminosity' in bodies.keys() else bodies['luminosity'],
+None if not 'absoluteMagnitude' in bodies.keys() else bodies['absoluteMagnitude'],
+None if not 'solarMasses' in bodies.keys() else bodies['solarMasses'],
+None if not 'solarRadius' in bodies.keys() else bodies['solarRadius'],
+None if not 'surfaceTemperature' in bodies.keys() else bodies['surfaceTemperature'],
+None if not 'rotationalPeriod' in bodies.keys() else bodies['rotationalPeriod'],
+None if not 'axialTilt' in bodies.keys() else bodies['axialTilt'],
+None if not 'parents' in bodies.keys() else str(bodies['parents']),
+None if not 'orbitalPeriod' in bodies.keys() else bodies['orbitalPeriod'],
+None if not 'semiMajorAxis' in bodies.keys() else bodies['semiMajorAxis'],
+None if not 'orbitalEccentricity' in bodies.keys() else bodies['orbitalEccentricity'],
+None if not 'orbitalInclination' in bodies.keys() else bodies['orbitalInclination'],
+None if not 'argOfPeriapsis' in bodies.keys() else bodies['argOfPeriapsis'],
+None if not 'meanAnomaly' in bodies.keys() else bodies['meanAnomaly'],
+None if not 'ascendingNode' in bodies.keys() else bodies['ascendingNode'],
+None if not 'timestamps' in bodies.keys() else str(bodies['timestamps']),
+udt,
+None if not 'isLandable' in bodies.keys() else bodies['isLandable'],
+None if not 'atmosphereType' in bodies.keys() else bodies['atmosphereType'],
+None if not 'surfacePressure' in bodies.keys() else bodies['surfacePressure'],
+None if not 'atmosphereComposition' in bodies.keys() else str(bodies['atmosphereComposition']),
+None,# if not 'stations' in bodies.keys() else str(bodies['stations']),
+None if not 'gravity' in bodies.keys() else bodies['gravity'],
+None if not 'earthMasses' in bodies.keys() else bodies['earthMasses'],
+None if not 'rotationalPeriodTidallyLocked' in bodies.keys() else bodies['rotationalPeriodTidallyLocked'],
+)
+            copytarget.write_row(record)
+    except psycopg.Error as e: 
+        print(f"Error bod: {e}")
+    except Exception as e:
+        print(e)
+    #btime=time.time()
+    if "rings" in bodies.keys():
+        for ring in bodies["rings"]:
+            update_rings(cur,ring,bodies["id64"],id64)
+    #rtime=time.time()
+    #print(f"({round((ttime-stime),4)},{round((btime-ttime),4)},{round((rtime-btime),4)})")
+    #if round((btime-ttime),4)>.001:
+    #    print(None if not 'stations' in bodies.keys() else str(bodies['stations']))
+
+def update_system(cur,jline):
+    stime = time.time()
+    if get_system_distance((jline['coords']['x'],jline['coords']['y'],jline['coords']['z']),(0,0,0))>5000: return
+    date = jline['date'].split("+")[0]
+    #print(jline)
+    try:
+        cur.execute(
+"""INSERT INTO systems(id64,coord,name,allegiance,government,primaryEconomy,secondaryEconomy,security,population,bodyCount,date)
+VALUES (%s,st_pointz(%s, %s, %s),%s,%s,%s,%s,%s,%s,%s,%s,%s) 
+ON CONFLICT (id64) DO UPDATE SET allegiance=%s,government=%s,primaryEconomy=%s,secondaryEconomy=%s,security=%s,population=%s,date=%s
+WHERE systems.date<EXCLUDED.date;""",
+(jline["id64"],
+jline['coords']['x'],jline['coords']['y'],jline['coords']['z'],
+jline['name'],
+None if not 'allegiance' in jline.keys() else jline['allegiance'],
+None if not 'government' in jline.keys() else jline['government'],
+None if not 'primaryEconomy' in jline.keys() else jline['primaryEconomy'],
+None if not 'secondaryEconomy' in jline.keys() else jline['secondaryEconomy'],
+None if not 'security' in jline.keys() else jline['security'],
+0 if not 'population' in jline.keys() else jline['population'],
+None if not 'bodyCount' in jline.keys() else jline['bodyCount'],
+date,
+None if not 'allegiance' in jline.keys() else jline['allegiance'],
+None if not 'government' in jline.keys() else jline['government'],
+None if not 'primaryEconomy' in jline.keys() else jline['primaryEconomy'],
+None if not 'secondaryEconomy' in jline.keys() else jline['secondaryEconomy'],
+None if not 'security' in jline.keys() else jline['security'],
+0 if not 'population' in jline.keys() else jline['population'],
+date,
+)
+)
+    except psycopg.Error as e: 
+        print(f"Error sys: {e}")
+    conn.commit()
+    syscom = time.time()
+    if "stations" in jline.keys():
+        for station in jline["stations"]:
+            update_stations(cur,station,jline["id64"])
+    statcom = time.time()
+    if "bodies" in jline.keys():
+        for body in jline["bodies"]:
+            update_bodies(cur,body,jline["id64"])
+    bcom = time.time()
+    global a1
+    global a2
+    global a3
+    a1 = a1[1:]+[round((syscom-stime),4)]
+    a2 = a2[1:]+[round((statcom-syscom),4)]
+    a3 = a3[1:]+[round((bcom-statcom),4)]
+    
+    #print(f"({round((syscom-stime),4)},{round((statcom-syscom),4)},{round((bcom-statcom),4)})")
+
+def alter_tables_add_constraints(cur):
+    cur.execute("""insert into bodytype (type) values (select unique subtype from bodies);""")
+    cur.execute("""update bodies set subtype =bodytype.autoid from bodytype where bodies.subtype=bodytype.type;""")
+    cur.execute("""alter table bodies alter column subtype TYPE INT using subtype::integer;""")
+    cur.execute("""alter table bodies add constraint fk_bodytype FOREIGN KEY (subtype) references bodytype (autoid);""")
+    cur.execute("""alter table bodies add constraint fk_systems_id64 FOREIGN KEY (system_id64) REFERENCES systems(id64);""")
+
+def load_messages(cur,filein):
+    start = time.time()
+    tmil=None
+    tnow=None
+    with gzip.open(filein,'r') as file:
+        file.readline()
+        n=0
+        for line in file:
+            rline = line.decode("utf-8")
+            jline = orjson.loads(rline.strip().strip(","))
+            n+=1
+            update_system(cur,jline)
+            if n>=1000000:
+                if n%1000000==0:
+                    tmil=time.time() 
+                    print(f"Scanned lines({int(n/1000000)}m)-({int(((n/1000000)/141)*100)}%) Estimated Time Remaining: {(((tmil-start)/(n/1000000))*(141-(n/1000000)))// 3600} hours")
+            elif n<1000000: 
+                if n%1000==0:
+                    tnow=time.time() 
+                    av_windowprint()
+                    print(f"Scanned lines({int(n/1000)}k)-({int(((n/1000000)/141)*100)}%) Estimated Time Remaining: {(((tnow-start)/(n/1000))*(141000-(n/1000)))// 3600} hours")
+                #if n%1000==0:print(f"Scanned lines({int(n/1000)}k)-({int(((n/1000000)/141)*100)}%)")
+            
+            #if get_system_distance([0,0,0],[jline['coords']['x'],jline['coords']['y'],jline['coords']['z']])<10000:
+            
+        
+
+def main():
+    argv = sys.argv        
+    if len(argv)>1:
+        global conn
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("Drop table if exists rings cascade;")
+        cur.execute("Drop table if exists bodies cascade;")
+        cur.execute("Drop table if exists bodytype cascade;")
+        ensure_setup(cur)
+        print("Setup complete")
+        conn.commit()
+        print("loading messages")
+        load_messages(cur,argv[1])
+        alter_tables(cur)
+        conn.commit()
+        conn.close()
+    else:
+        print("File path not present in command")
+
+
+
+if __name__ == '__main__':
+    sys.exit(main())
