@@ -313,7 +313,7 @@ date,
     #print(f"({round((syscom-stime),4)},{round((statcom-syscom),4)},{round((bcom-statcom),4)})")
 
 def alter_tables_add_constraints(cur):
-    cur.execute("""insert into bodytype (type) values (select unique subtype from bodies);""")
+    cur.execute("""insert into bodytype (type) select distinct subtype from bodies;""")
     cur.execute("""update bodies set subtype =bodytype.autoid from bodytype where bodies.subtype=bodytype.type;""")
     cur.execute("""alter table bodies alter column subtype TYPE INT using subtype::integer;""")
     cur.execute("""alter table bodies add constraint fk_bodytype FOREIGN KEY (subtype) references bodytype (autoid);""")
@@ -359,8 +359,10 @@ def main():
         print("Setup complete")
         conn.commit()
         print("loading messages")
-        load_messages(cur,argv[1])
-        alter_tables(cur)
+        try:
+            load_messages(cur,argv[1])
+        except: pass
+        alter_tables_add_constraints(cur)
         conn.commit()
         conn.close()
     else:
